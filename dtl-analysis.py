@@ -165,18 +165,28 @@ def main() -> None:
     )
     logger.info("Initialising")
 
+    import json
     import os
+    from typing import Any
 
     # TODO: try pylibics as BioIO is complex to install
     import bioio_bioformats
     import numpy as np
+    import numpy.typing as npt
     from bioio import BioImage
     from tifffile import imread, imwrite
 
     from dtl.utils import (
+        analyse_objects,
         filter_method,
         find_images,
+        find_objects,
+        format_spot_results,
+        format_summary_results,
         object_threshold,
+        save_csv,
+        spot_analysis,
+        spot_summary,
         threshold_method,
     )
 
@@ -242,7 +252,7 @@ def main() -> None:
         fun = threshold_method(args.method, std=std, q=args.quantile)
         filter_fun = filter_method(args.sigma, args.sigma2)
 
-        spot_fn = f"{base}.spot.tiff"
+        spot_fn = f"{base}.spots.tiff"
         im1 = image[args.spot_ch]
         if stage <= 2 or not os.path.exists(spot_fn):
             # thresholding requires an integer image.
@@ -271,130 +281,124 @@ def main() -> None:
             spot_fn,
         )
 
-        # TODO: Identify lamina invaginations
+        # TODO: Identify lamina invaginations.
+        # Lamina may have invaginations (spots) inside the nucleus or a peripheral ring
+        # when the plane intersects the membrane.
+        # For now set as empty.
+        label2 = np.zeros(label_image.shape, dtype=np.uint8)
 
-        # spot2_fn = f"{base}.spot2{suffix}"
-        # im2 = image[args.spot_ch2]
-        # if stage <= 2 or not os.path.exists(spot2_fn):
+        lamina_fn = f"{base}.lamina.tiff"
+        im2 = image[args.lamina_ch]
+        # if stage <= 2 or not os.path.exists(lamina_fn):
+        #     # thresholding requires an integer image.
+        #     # convert to uint16
+        #     logger.info("Filtering lamina channel %d", args.lamina_ch)
+        #     filtered = filter_fun(im2)
+        #     filtered = (
+        #         (filtered - np.min(filtered)) * (2**16 / np.ptp(filtered))
+        #     ).astype(np.int_)
+        #     logger.info("Identifying lamina")
         #     label2 = object_threshold(
-        #         filter_fun(im2),
+        #         filtered,
         #         label_image,
         #         fun,
         #         fill_holes=args.fill_holes,
         #         min_size=args.min_spot_size,
         #     )
-        #     imwrite(spot2_fn, label2, compression="zlib")
+        #     imwrite(lamina_fn, label2, compression="zlib")
         # else:
-        #     label2 = imread(spot2_fn)
-        # logger.info(
-        #     "Identified %d spots in channel %d: %s",
-        #     np.max(label2),
-        #     args.spot_ch2,
-        #     spot2_fn,
-        # )
+        #     logger.info("Loading %s", lamina_fn)
+        #     label2 = imread(lamina_fn)
+        # TODO: What to log as the lamina may have internal spots but also an edge halo
+        logger.info(
+            "Identified %d lamina spots in channel %d: %s",
+            np.max(label2),
+            args.lamina_ch,
+            lamina_fn,
+        )
 
         # # Analysis cannot be loaded from previous results, just skip
-        # spot_fn = f"{base}.spots.csv"
-        # summary_fn = f"{base}.summary.csv"
+        spot_fn = f"{base}.spots.csv"
+        summary_fn = f"{base}.summary.csv"
 
-        # # Create an anlysis function to allow this to be repeated.
-        # # Settings used: distance, size, min_size, neighbour_distance.
-        # # These could be added as input for the function and updated through the GUI.
-        # def analysis_fun(
-        #     label_image: npt.NDArray[Any],
-        #     label1: npt.NDArray[Any],
-        #     label2: npt.NDArray[Any],
-        #     # fix values for loop variables
-        #     image: npt.NDArray[Any] = image,
-        #     im1: npt.NDArray[Any] = im1,
-        #     im2: npt.NDArray[Any] = im2,
-        #     spot_fn: str = spot_fn,
-        #     summary_fn: str = summary_fn,
-        # ) -> None:
-        #     # find micro-nuclei and bleb parents
-        #     objects = find_objects(label_image)
-        #     data = find_micronuclei(
-        #         label_image,
-        #         objects=objects,
-        #         distance=args.distance,
-        #         size=args.size,
-        #         min_size=args.min_size,
-        #     )
+        # Create an anlysis function to allow this to be repeated.
+        # Settings used: distance, size, min_size, neighbour_distance.
+        # These could be added as input for the function and updated through the GUI.
+        def analysis_fun(
+            label_image: npt.NDArray[Any],
+            label1: npt.NDArray[Any],
+            label2: npt.NDArray[Any],
+            # fix values for loop variables
+            image: npt.NDArray[Any] = image,
+            im1: npt.NDArray[Any] = im1,
+            im2: npt.NDArray[Any] = im2,
+            spot_fn: str = spot_fn,
+            summary_fn: str = summary_fn,
+        ) -> None:
+            # find objects
+            objects = find_objects(label_image)
 
-        #     # Create groups. This collates blebs with their parent.
-        #     groups = collate_groups(data)
-        #     class_names = classify_objects(data, args.size, args.distance)
-        #     logger.info(
-        #         "Classified objects: %s", dict(Counter(class_names.values()))
-        #     )
+            results = spot_analysis(
+                label_image,
+                objects,
+                im1,
+                label1,
+                im2,
+                label2,
+            )
 
-        #     results = spot_analysis(
-        #         label_image,
-        #         objects,
-        #         groups,
-        #         im1,
-        #         label1,
-        #         im2,
-        #         label2,
-        #         neighbour_distance=args.neighbour_distance,
-        #     )
+            formatted = format_spot_results(results, scale=args.scale)
+            logger.info("Saving spot results: %s", spot_fn)
+            save_csv(spot_fn, formatted)
 
-        #     formatted = format_spot_results(
-        #         results, class_names=class_names, scale=args.scale
-        #     )
-        #     logger.info("Saving spot results: %s", spot_fn)
-        #     save_csv(spot_fn, formatted)
+            o_data = analyse_objects(
+                image[args.object_ch], label_image, objects
+            )
+            # Collate to {ID: (size, intensity, cx, cy, cz)}
+            object_data = {
+                x[0]: (x[1],) + y for x, y in zip(objects, o_data, strict=True)
+            }
 
-        #     o_data = analyse_objects(
-        #         image[args.object_ch], label_image, objects
-        #     )
-        #     # Collate to ID: (size, intensity, cx, cy)
-        #     object_data = {
-        #         x[0]: (x[1],) + y for x, y in zip(objects, o_data, strict=True)
-        #     }
+            summary = spot_summary(results, len(objects))
+            formatted2 = format_summary_results(
+                summary, object_data=object_data
+            )
+            logger.info("Saving summary results: %s", summary_fn)
+            save_csv(summary_fn, formatted2)
 
-        #     summary = spot_summary(results, groups)
-        #     formatted2 = format_summary_results(
-        #         summary, class_names=class_names, object_data=object_data
-        #     )
-        #     logger.info("Saving summary results: %s", summary_fn)
-        #     save_csv(summary_fn, formatted2)
+        if stage <= 3 or not (
+            os.path.exists(spot_fn) and os.path.exists(summary_fn)
+        ):
+            analysis_fun(label_image, label1, label2)
+        else:
+            logger.info("Existing spot results: %s", spot_fn)
+            logger.info("Existing summary results: %s", summary_fn)
 
-        # if stage <= 3 or not (
-        #     os.path.exists(spot_fn) and os.path.exists(summary_fn)
-        # ):
-        #     analysis_fun(label_image, label1, label2)
-        # else:
-        #     logger.info("Existing spot results: %s", spot_fn)
-        #     logger.info("Existing summary results: %s", summary_fn)
-
-        # # Save settings if all OK
-        # fn = f"{base}.settings.json"
-        # logger.info("Saving settings: %s", fn)
-        # with open(fn, "w") as f:
-        #     d = vars(args)
-        #     d["image"] = image_fn
-        #     json.dump(d, f, indent=2)
+        # Save settings if all OK
+        fn = f"{base}.settings.json"
+        logger.info("Saving settings: %s", fn)
+        with open(fn, "w") as f:
+            d = vars(args)
+            d["image"] = image_fn
+            json.dump(d, f, indent=2)
 
         if args.view:
             logger.info("Launching viewer")
+            import pandas as pd
 
             from dtl.gui import (
                 create_viewer,
                 show_viewer,
             )
 
-            # label_df = pd.read_csv(summary_fn)
-            # spot_df = pd.read_csv(spot_fn)
+            label_df = pd.read_csv(summary_fn)
+            spot_df = pd.read_csv(spot_fn)
 
             visible_channels = (
                 args.visible_channels
                 if args.visible_channels
                 else [args.spot_ch, args.lamina_ch]
             )
-            # label_image = np.zeros(image[0].shape, dtype=np.uint8)
-            # label1 = np.zeros(label_image.shape, dtype=np.uint8)
-            label2 = np.zeros(label_image.shape, dtype=np.uint8)
             viewer = create_viewer(
                 image,
                 label_image,
@@ -402,8 +406,8 @@ def main() -> None:
                 label2,
                 channel_names=args.channel_names,
                 visible_channels=visible_channels,
-                # label_df=label_df,
-                # spot_df=spot_df,
+                label_df=label_df,
+                spot_df=spot_df,
                 upper_limit=args.upper_limit,
             )
 

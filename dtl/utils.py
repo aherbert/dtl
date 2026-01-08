@@ -12,9 +12,7 @@ import scipy.spatial
 import skimage.filters
 import skimage.measure
 import tifffile
-from cellpose.metrics import mask_ious
 from scipy import ndimage as ndi
-from scipy.optimize import linear_sum_assignment
 from skimage.segmentation import clear_border
 from skimage.util import map_array
 
@@ -67,12 +65,12 @@ def _is_image(fn: str) -> bool:
 
 def find_objects(
     label_image: npt.NDArray[Any],
-) -> list[tuple[int, int, tuple[slice, slice]]]:
+) -> list[tuple[int, int, tuple[slice, ...]]]:
     """Find the objects in the labeled image.
 
     Identifies the size and bounding box of objects. The bounding box (bb) is
-    a tuple of slices of [min_row, max_row) and [min_col, max_col)
-    suitable for extracting the region using im[bb[0], bb[1]].
+    a tuple of slices of [min, max) for each dimension
+    suitable for extracting the region using im[bb].
 
     This method combines numpy.bincount with scipy.ndimage.find_objects.
 
@@ -80,7 +78,7 @@ def find_objects(
         label_image: Label image.
 
     Returns:
-        list of (ID, size, (slice(min_row, max_row), slice(min_col, max_col)))
+        list of (ID, size, tuple(slice(min, max), ...))
     """
     data = []
     h = np.bincount(label_image.ravel())
@@ -93,172 +91,27 @@ def find_objects(
     return data
 
 
-def find_micronuclei(
-    label_image: npt.NDArray[Any],
-    objects: list[tuple[int, int, tuple[slice, slice]]] | None = None,
-    distance: int = 20,
-    size: int = 2000,
-    min_size: int = 50,
-) -> list[tuple[int, int, int, float]]:
-    """Find the micro-nuclei objects.
-
-    Identifies all micro-nuclei as objects smaller then the size threshold.
-    For each micro-nucleus, searches for an adjacent nucleus within the
-    threshold distance to assign as the parent.
-
-    Args:
-        label_image: Label image.
-        objects: Objects of interest (computed using find_objects).
-        distance: Search distance for bleb.
-        size: Maximum micro-nucleus size.
-        min_size: Minimum micro-nucleus size.
-
-    Returns:
-        list of (ID, size, parent ID, distance)
-    """
-    if objects is None:
-        objects = find_objects(label_image)
-    sizes = {label: area for (label, area, _) in objects}
-
-    data: list[tuple[int, int, int, float]] = []
-    for label, area, bbox in objects:
-        if area < min_size:
-            continue
-        if area > size:
-            data.append((label, area, 0, 0.0))
-            continue
-
-        # Extract the bounding box plus the search distance
-        y, yy, x, xx = (
-            max(0, bbox[0].start - distance),
-            min(label_image.shape[0], bbox[0].stop + distance),
-            max(0, bbox[1].start - distance),
-            min(label_image.shape[1], bbox[1].stop + distance),
-        )
-        crop = label_image[y:yy, x:xx]
-
-        # Check if another object is within the box:
-        other = set(np.unique(crop))
-        other.remove(label)
-        if 0 in other:
-            other.remove(0)
-        # ignore neighbour micronuclei
-        other_list = list(other)
-        for parent in other_list:
-            if sizes[parent] <= size:
-                other.remove(parent)
-        if len(other) == 0:
-            data.append((label, area, 0, 0.0))
-            continue
-
-        # Identify border pixels for each object
-        b1 = _find_border(crop, [label])
-        b2 = _find_border(crop, list(other))
-        # Create KD-tree for the micronuclei and other objects
-        c1 = np.argwhere(b1)
-        c2 = np.argwhere(b2)
-        tree1 = scipy.spatial.KDTree(c1)
-        # Find the distance and index of the object in the tree (ignored) for each border pixel
-        distances, _index = tree1.query(c2, distance_upper_bound=distance)
-        # Get the closest neighbour object (handle ties with a count)
-        min_d = distance + 1
-        count: dict[int, int] = {}
-        for d, c in zip(distances, c2, strict=False):
-            if min_d < d:
-                continue
-            y, x = c
-            parent = int(crop[y, x])
-            if min_d == d:
-                count[parent] = count.get(parent, 0) + 1
-            else:
-                min_d = d
-                count = {parent: 1}
-
-        # Note if multiple parents have the same count of neighbour pixels
-        # then choose the largest, otherwise the choice is undefined and
-        # defaults to the parent ID
-        neighbours = sorted([(v, sizes[k], k) for (k, v) in count.items()])
-        if neighbours:
-            data.append((label, area, neighbours[0][-1], float(min_d)))
-        else:
-            data.append((label, area, 0, 0.0))
-
-    return data
-
-
 def _find_border(
     label_image: npt.NDArray[Any], labels: list[int]
 ) -> npt.NDArray[Any]:
     """Find border pixels for all labelled objects."""
     mask = np.zeros(label_image.shape, dtype=bool)
     eroded = np.zeros(label_image.shape, dtype=bool)
-    strel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.uint8)
+    strel = ndi.generate_binary_structure(label_image.ndim, 1)
     for label in labels:
         target = label_image == label
         mask = mask | target
-        eroded = eroded | ndi.binary_erosion(target, strel)
+        # erosion must not erode the object face at the border
+        eroded = eroded | ndi.binary_erosion(target, strel, border_value=1)
     border = label_image * mask - label_image * eroded
     return border.astype(label_image.dtype)
-
-
-def collate_groups(
-    data: list[tuple[int, int, int, float]],
-) -> list[tuple[int, ...]]:
-    """Collate the groups by joining labels with their parent.
-
-    The input data is generated by find_micronuclei.
-
-    Args:
-        data: list of (ID, size, parent ID, distance).
-
-    Returns:
-        Labels of objects in each group.
-    """
-    # Initialise so each group contains only itself
-    group_d = {x: [x] for (x, *_) in data}
-    # Merge labels into their parent
-    for label, _, parent, _ in data:
-        if parent:
-            del group_d[label]
-            group_d[parent].append(label)
-    return sorted([tuple(x) for x in group_d.values()])
-
-
-def classify_objects(
-    data: list[tuple[int, int, int, float]],
-    max_size: int,
-    max_distance: float,
-) -> dict[int, str]:
-    """Classify the objects.
-
-    Classify large objects as nuclei. Small objects are either micro-nuclei,
-    or a bleb if closer than the threshold distance to their parent.
-
-    The input data is generated by find_micronuclei.
-
-    Args:
-        data: list of (ID, size, parent ID, distance).
-        max_size: Maximum micro-nucleus size.
-        max_distance: Maximum distance of bleb to the parent nucleus.
-
-    Returns:
-        Labels of objects in each group.
-    """
-    class_names = {}
-    for x, size, parent, distance in data:
-        if size <= max_size:
-            cls = "bleb" if distance < max_distance and parent else "mni"
-        else:
-            cls = "nucleus"
-        class_names[x] = cls
-    return class_names
 
 
 def object_threshold(
     im: npt.NDArray[Any],
     label_image: npt.NDArray[Any],
     fun: Callable[[npt.NDArray[Any]], int],
-    objects: list[tuple[int, int, tuple[slice, slice]]] | None = None,
+    objects: list[tuple[int, int, tuple[slice, ...]]] | None = None,
     fill_holes: int = 0,
     min_size: int = 0,
 ) -> npt.NDArray[Any]:
@@ -459,189 +312,100 @@ def filter_method(
 
 def spot_analysis(
     label_image: npt.NDArray[Any],
-    objects: list[tuple[int, int, tuple[slice, slice]]],
-    groups: list[tuple[int, ...]],
+    objects: list[tuple[int, int, tuple[slice, ...]]],
     im1: npt.NDArray[Any],
     label1: npt.NDArray[Any],
     im2: npt.NDArray[Any],
     label2: npt.NDArray[Any],
-    neighbour_distance: float = 20,
 ) -> list[tuple[int | float, ...]]:
-    """Analyse object labels in two image channels within each group of objects.
+    """Analyse spots in image 1 within parent objects.
 
-    The group object is combined using the labels from the provided groups.
-    The labels within the two images are compared for overlap of single objects
-    and the Intersection-over-Union (IoU) and Mander's coefficient computed.
+    The distance between the spot and the edge of the parent is computed.
+    The distance between the spot and internal objects in image 2 is computed.
+    The results contain the closest neighbour distance and type.
 
-    Data is returned for each object label within the first and second image:
-
-    group: Group number (from 1).
-    channel: Channel of label.
     label: Label.
-    parent: Label of parent from the group of objects.
+    parent: Label of parent.
     size: Size of label.
     mean intensity: Mean intensity of label image.
     cx: Centroid x.
     cy: Centroid y.
-    overlap: Label from the other channel overlap.
-    iou: Intersection-over-Union (IoU) of the overlap with the other channel object.
-    m: Mander's coefficient of the overlap.
-    neighbour: Label from the other channel neighbour.
+    cz: Centroid z.
+    ox: Centroid x of neighbour.
+    oy: Centroid y of neighbour.
+    oz: Centroid z of neighbour.
+    type: Type of neighbour.
     distance: Distance to nearest neighbour.
 
     Args:
         label_image: Label iamge.
         objects: Objects of interest (computed using find_objects).
-        groups: Labels of objects in each group.
         im1: First image.
-        label1: First image object labels.
+        label1: First image object labels (spots).
         im2: Second image.
-        label2: Second image object labels.
-        neighbour_distance: Max distance to nearest neighbour.
+        label2: Second image object labels (internal objects).
 
     Returns:
         analysis results
     """
-    # object look-up by label
-    object_d = {o[0]: o for o in objects}
-
     results: list[tuple[int | float, ...]] = []
-    for group_id, group in enumerate(groups):
-        group_id += 1
-        bbox = object_d[group[0]][2]
-        y, yy, x, xx = bbox[0].start, bbox[0].stop, bbox[1].start, bbox[1].stop
-        for label in group[1:]:
-            bbox = object_d[label][2]
-            y, yy, x, xx = (
-                min(y, bbox[0].start),
-                max(yy, bbox[0].stop),
-                min(x, bbox[1].start),
-                max(xx, bbox[1].stop),
-            )
+    for parent, _, bbox in objects:
         # Simplify the group object by cropping and relabel
-        mask = _extract_labels(label_image[y:yy, x:xx], group)
-        c_label_, id_ = relabel(label_image[y:yy, x:xx] * mask)
-        c_label1, id1 = relabel(label1[y:yy, x:xx] * mask)
-        c_label2, id2 = relabel(label2[y:yy, x:xx] * mask)
-        if len(id1) == 0 and len(id2) == 0:
+        mask = label_image[bbox] == parent
+        c_label1, id1 = relabel(label1[bbox] * mask)
+        if len(id1) == 0:
             # Nothing to analyse
             continue
-        c_im1 = im1[y:yy, x:xx]
-        c_im2 = im2[y:yy, x:xx]
+        c_label_, id_ = relabel(label_image[bbox] * mask)
+        c_label2, id2 = relabel(label2[bbox] * mask)
+        c_im1 = im1[bbox]
+        oz, oy, ox = bbox[0].start, bbox[1].start, bbox[2].start
         # Objects
         objects1 = find_objects(c_label1)
-        objects2 = find_objects(c_label2)
-        # iou for label1 with label2
-        iou1, match1 = mask_ious(c_label1, c_label2)
-        # total intensity, cx, cy
-        data1 = analyse_objects(c_im1, c_label1, objects1, (y, x))
-        data2 = analyse_objects(c_im2, c_label2, objects2, (y, x))
-        # Compute Mander's coefficient for the matches
-        manders1 = {}
-        manders2 = {}
-        for i, l2 in enumerate(match1):
-            if iou1[i] == 0:
-                continue
-            l1 = i + 1
-            # crop to overlap
-            bbox1 = objects1[i][2]
-            bbox2 = objects2[l2 - 1][2]
-            y, yy, x, xx = (
-                min(bbox1[0].start, bbox2[0].start),
-                max(bbox1[0].stop, bbox2[0].stop),
-                min(bbox1[1].start, bbox2[1].start),
-                max(bbox1[1].stop, bbox2[1].stop),
-            )
-            mask = (c_label1[y:yy, x:xx] == l1) & (c_label2[y:yy, x:xx] == l2)
-            manders1[l1] = float(
-                (c_im1[y:yy, x:xx] * mask).sum() / data1[i][0]
-            )
-            manders2[l2] = float(
-                (c_im2[y:yy, x:xx] * mask).sum() / data2[l2 - 1][0]
-            )
-        # Create reverse IoU lookup
-        iou2 = np.zeros(len(data2))
-        match2 = np.zeros(len(data2), dtype=np.int_)
-        for i, (iou, m) in enumerate(zip(iou1, match1, strict=True)):
-            if iou:
-                j = m - 1
-                match2[j] = i + 1
-                iou2[j] = iou
-        # closest neighbour distance matching
-        d1, d2, neighbour1, neighbour2 = (
-            np.full(len(data1), -1.0),
-            np.full(len(data2), -1.0),
-            np.zeros(len(data1), dtype=np.int_),
-            np.zeros(len(data2), dtype=np.int_),
+        data1 = analyse_objects(c_im1, c_label1, objects1, (oz, oy, ox))
+        # Borders as KD-tree
+        # TODO: Add anisotropy for z axis
+        z, y, x = np.nonzero(
+            _find_border(c_label_, [x + 1 for x in range(len(id_))])
         )
-        if len(data1) and len(data2):
-            c1 = np.array(data1)[:, -2:]
-            c2 = np.array(data2)[:, -2:]
-            row_ind, col_ind, cost = _map_partial_linear_sum(
-                c1, c2, neighbour_distance
-            )
-            for r, c in zip(row_ind, col_ind, strict=True):
-                d1[r] = d2[c] = cost[r, c]
-                neighbour1[r] = c
-                neighbour2[c] = r
-        # Report
-        for (
-            ch_,
-            data_,
-            id_,
-            other_id_,
-            objects_,
-            iou_,
-            match_,
-            manders_,
-            d_,
-            neighbour_,
-        ) in zip(
-            [1, 2],
-            [data1, data2],
-            [id1, id2],
-            [id2, id1],
-            [objects1, objects2],
-            [iou1, iou2],
-            [match1, match2],
-            [manders1, manders2],
-            [d1, d2],
-            [neighbour1, neighbour2],
-            strict=True,
-        ):
-            for i, d in enumerate(data_):
-                cx, cy = d[1], d[2]
-                parent = int(label_image[math.floor(cy), math.floor(cx)])
-                results.append(
-                    (
-                        group_id,
-                        ch_,
-                        int(id_[i]),
-                        parent,
-                        objects_[i][1],
-                        d[0] / objects_[i][1],
-                        cx,
-                        cy,
-                        int(other_id_[match_[i] - 1]) if iou_[i] else 0,
-                        float(iou_[i]),
-                        manders_.get(i + 1, 0),
-                        int(other_id_[neighbour_[i]]) if d_[i] >= 0 else 0,
-                        float(d_[i]),
-                    )
+        tree1 = scipy.spatial.KDTree(np.column_stack([x, y, z]))
+        # TODO: Add option to find distance to border or centroid of internal objects
+        z, y, x = np.nonzero(
+            _find_border(c_label2, [x + 1 for x in range(len(id2))])
+        )
+        tree2 = scipy.spatial.KDTree(np.column_stack([x, y, z]))
+        for i, d in enumerate(data1):
+            # Compute distance to borders
+            offset = np.array([ox, oy, oz])
+            coords = np.array(d[-3:]) - offset
+            r1 = tree1.query(coords)
+            r2 = tree2.query(coords)
+            # Save closest
+            if r1[0] < r2[0]:
+                r = r1
+                c = tree1.data[r1[1]]
+            else:
+                r = r2
+                c = tree2.data[r2[1]]
+            c = c + offset
+            results.append(
+                (
+                    int(id1[i]),
+                    parent,
+                    objects1[i][1],
+                    d[0] / objects1[i][1],
+                    d[1],
+                    d[2],
+                    d[3],
+                    float(c[0]),
+                    float(c[1]),
+                    float(c[2]),
+                    0 if r is r1 else 1,
+                    r[0],
                 )
+            )
 
     return results
-
-
-def _extract_labels(
-    label_image: npt.NDArray[Any], labels: tuple[int, ...]
-) -> npt.NDArray[Any]:
-    """Extract a mask for all labelled objects."""
-    mask = np.zeros(label_image.shape, dtype=bool)
-    for label in labels:
-        target = label_image == label
-        mask = mask | target
-    return mask
 
 
 def filter_segmentation(
@@ -730,99 +494,57 @@ def relabel(
 def analyse_objects(
     im: npt.NDArray[Any],
     label_image: npt.NDArray[Any],
-    objects: list[tuple[int, int, tuple[slice, slice]]],
-    offset: tuple[int, int] = (0, 0),
-) -> list[tuple[float, float, float]]:
+    objects: list[tuple[int, int, tuple[slice, ...]]],
+    offset: tuple[int, int, int] = (0, 0, 0),
+) -> list[tuple[float, float, float, float]]:
     """Extract the intensity and centroids for all labelled objects.
 
-    Centroids use (0.5, 0.5) as the centre of pixels.
+    Centroids use (0.5, 0.5, 0.5) as the centre of voxels.
 
     Args:
         im: Image.
         label_image: Label image.
-        objects: List of (ID, size, (slice(min_row, max_row), slice(min_col, max_col))).
-        offset: Offset to add to the centre (Y,X).
+        objects: List of (ID, size, (slice(min, max), ...)).
+        offset: Offset to add to the centre (Z,Y,X).
 
     Returns:
-        list of (intensity, cx, cy)
+        list of (intensity, cx, cy, cz)
     """
     data = []
     for label, _, bbox in objects:
-        crop_image = im[bbox[0], bbox[1]]
-        crop_label = label_image[bbox[0], bbox[1]]
+        crop_image = im[bbox]
+        crop_label = label_image[bbox]
         mask = crop_label == label
         intensity = float((crop_image * mask).sum())
-        y, x = np.nonzero(mask)
+        z, y, x = np.nonzero(mask)
         weights = crop_image[mask].ravel()
         weights = weights / weights.sum()
-        cy, cx = (
-            float(np.sum(y * weights) + bbox[0].start + offset[0] + 0.5),
-            float(np.sum(x * weights) + bbox[1].start + offset[1] + 0.5),
+        cz, cy, cx = (
+            float(np.sum(z * weights) + bbox[0].start + offset[0] + 0.5),
+            float(np.sum(y * weights) + bbox[1].start + offset[1] + 0.5),
+            float(np.sum(x * weights) + bbox[2].start + offset[2] + 0.5),
         )
-        data.append((intensity, cx, cy))
+        data.append((intensity, cx, cy, cz))
 
     return data
 
 
-def _map_partial_linear_sum(
-    c1: npt.NDArray[Any], c2: npt.NDArray[Any], threshold: float
-) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[Any]]:
-    """Minimum weight bipartite graph matching using partial cost matrix of Euclidean distance.
-
-    Args:
-        c1: Coordinates 1
-        c2: Coordinates 1
-        threshold: Distance threshold for alignment mappings
-
-    Returns:
-        Mapping from row -> column, partial cost matrix
-    """
-    # Dense matrix built using KD-Trees with some false edges.
-    tree1 = scipy.spatial.KDTree(c1)
-    tree2 = scipy.spatial.KDTree(c2)
-    # Ensure a full matching exists by setting false edges between all vertices.
-    # Use a distance that cannot be chosen over an actual edge.
-    cost = np.full((len(c1), len(c2)), len(c1) * threshold * 1.5)
-    indexes = tree1.query_ball_tree(tree2, r=threshold)
-    count = 0
-    for i, v1 in enumerate(c1):
-        cm = cost[i]
-        count += len(indexes[i])
-        # Note: If there are no indexes then the threshold is too low.
-        # We could: (a) Increase the threshold until there some edges for
-        # all vertices; (b) choose n random points, find their closest
-        # neighbours and use to estimate the threshold. Currently the
-        # vertex should join a false edge and be removed later.
-        for j in indexes[i]:
-            v2 = c2[j]
-            d = v1 - v2
-            cm[j] = np.sqrt((d * d).sum())
-    row_ind, col_ind = linear_sum_assignment(cost)
-
-    # Ignore large distance mappings. Can occur due to false edges.
-    for i, (r, c) in enumerate(zip(row_ind, col_ind, strict=True)):
-        if cost[r][c] > threshold:
-            row_ind[i], col_ind[i] = -1, -1
-    selected = row_ind >= 0
-    row_ind = row_ind[selected]
-    col_ind = col_ind[selected]
-    return row_ind, col_ind, cost
-
-
 def spot_summary(
     results: list[tuple[int | float, ...]],
-    groups: list[tuple[int, ...]],
+    n: int,
 ) -> list[tuple[int, ...]]:
-    """Summarise the spots results by group.
+    """Summarise the spots results by parent.
 
-    group: Group number.
+    Parents may not contain any spots so the total number of parents
+    must be provided.
+
     label: Parent label.
-    count1: Number of spots in channel 1.
-    count2: Number of spots in channel 2.
+    count1: Number of spots closest to edge.
+    count2: Number of spots closest to internal.
 
     Args:
         results: Spot analysis results.
-        groups: Labels of objects in each group.
+        n: Number of parent objects.
 
     Returns:
         summary
@@ -830,24 +552,20 @@ def spot_summary(
     # Count of spots in each parent label
     count1: dict[int, int] = {}
     count2: dict[int, int] = {}
-    for _group, ch, _label, parent, *_ in results:
+    for _label, parent, *other in results:
         parent = int(parent)
-        d = count1 if ch == 1 else count2
+        cls = other[-2]
+        d = count1 if cls == 0 else count2
         d[parent] = d.get(parent, 0) + 1
 
     summary: list[tuple[int, ...]] = []
-    for group_id, group in enumerate(groups):
-        group_id += 1
-        for label in group:
-            summary.append(
-                (group_id, label, count1.get(label, 0), count2.get(label, 0))
-            )
+    for label in range(1, n + 1):
+        summary.append((label, count1.get(label, 0), count2.get(label, 0)))
     return summary
 
 
 def format_spot_results(
     results: list[tuple[int | float, ...]],
-    class_names: dict[int, str] | None = None,
     scale: float = 0,
 ) -> list[tuple[int | float | str, ...]]:
     """Format the spot results.
@@ -857,7 +575,6 @@ def format_spot_results(
 
     Args:
         results: Spot analysis results.
-        class_names: Optional class name of each object.
         scale: Optional distance scale (micrometers/pixel).
 
     Returns:
@@ -866,28 +583,24 @@ def format_spot_results(
     out: list[tuple[int | float | str, ...]] = []
     out.append(
         (
-            "group",
-            "channel",
             "label",
             "parent",
-            "class",
             "size",
             "mean",
             "cx",
             "cy",
-            "overlap",
-            "iou",
-            "manders",
-            "neighbour",
+            "cz",
+            "ox",
+            "oy",
+            "oz",
+            "type",
             "distance",
         )
     )
     if scale:
         out[0] = out[0] + ("distance (μm)",)
     for data in results:
-        parent = int(data[3])
-        cls = class_names.get(parent, "") if class_names else ""
-        formatted = data[:4] + (cls,) + data[4:]
+        formatted = data
         if scale:
             formatted = formatted + (data[-1] * scale,)
         out.append(formatted)
@@ -897,15 +610,14 @@ def format_spot_results(
 
 def format_summary_results(
     summary: list[tuple[int, ...]],
-    class_names: dict[int, str] | None = None,
-    object_data: dict[int, tuple[int, float, float, float]] | None = None,
+    object_data: dict[int, tuple[int, float, float, float, float]]
+    | None = None,
 ) -> list[tuple[int | float | str, ...]]:
     """Format the spot summary results.
 
     Args:
         summary: Spot analysis summary results.
-        class_names: Optional class name of each object.
-        object_data: Optional data for each object (size, intensity, cx, cy)
+        object_data: Optional data for each object (size, intensity, cx, cy, cz)
 
     Returns:
         Formatted results
@@ -913,29 +625,25 @@ def format_summary_results(
     out: list[tuple[int | float | str, ...]] = []
     out.append(
         (
-            "group",
             "label",
             "size",
             "intensity",
             "cx",
             "cy",
-            "class",
-            "count1",
-            "count2",
+            "cz",
+            "edge",
+            "internal",
             "total",
         )
     )
     for data in summary:
-        parent = int(data[1])
+        parent = int(data[0])
         parent_data = (
-            object_data.get(parent, (0, 0, 0, 0))
+            object_data.get(parent, (0, 0, 0, 0, 0))
             if object_data
-            else (0, 0, 0, 0)
+            else (0, 0, 0, 0, 0)
         )
-        cls = class_names.get(parent, "") if class_names else ""
-        formatted = (
-            data[:2] + parent_data + (cls,) + data[2:] + (data[-2] + data[-1],)
-        )
+        formatted = data[:1] + parent_data + data[1:] + (data[-2] + data[-1],)
         out.append(formatted)
 
     return out
