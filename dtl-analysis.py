@@ -76,49 +76,49 @@ def main() -> None:
         help="Minimum object size (pixels) (default: %(default)s)",
     )
 
-    # group = parser.add_argument_group("Threshold Options")
-    # _ = group.add_argument(
-    #     "--sigma",
-    #     default=1.5,
-    #     type=float,
-    #     help="Gaussian smoothing filter standard deviation (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--sigma2",
-    #     default=30,
-    #     type=float,
-    #     help="Background Gaussian smoothing filter standard deviation (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--method",
-    #     default="mean_plus_std_q",
-    #     choices=["mean_plus_std", "mean_plus_std_q", "otsu", "yen", "minimum"],
-    #     help="Thresholding method (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--std",
-    #     default=7,
-    #     type=float,
-    #     help="Std.dev above the mean (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--quantile",
-    #     default=0.75,
-    #     type=float,
-    #     help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--fill-holes",
-    #     default=2,
-    #     type=int,
-    #     help="Remove contiguous holes smaller than the specified size (pixels) (default: %(default)s)",
-    # )
-    # _ = group.add_argument(
-    #     "--min-spot-size",
-    #     default=4,
-    #     type=int,
-    #     help="Minimum spot size (pixels) (default: %(default)s)",
-    # )
+    group = parser.add_argument_group("Threshold Options")
+    _ = group.add_argument(
+        "--sigma",
+        default=1.5,
+        type=float,
+        help="Gaussian smoothing filter standard deviation (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--sigma2",
+        default=0,
+        type=float,
+        help="Background Gaussian smoothing filter standard deviation (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--method",
+        default="otsu",
+        choices=["mean_plus_std", "mean_plus_std_q", "otsu", "yen", "minimum"],
+        help="Thresholding method (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--std",
+        default=7,
+        type=float,
+        help="Std.dev above the mean (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--quantile",
+        default=0.75,
+        type=float,
+        help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--fill-holes",
+        default=2,
+        type=int,
+        help="Remove contiguous holes smaller than the specified size (pixels) (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--min-spot-size",
+        default=4,
+        type=int,
+        help="Minimum spot size (pixels) (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("View Options")
     _ = group.add_argument(
@@ -174,10 +174,13 @@ def main() -> None:
     from tifffile import imread, imwrite
 
     from dtl.utils import (
+        filter_method,
         find_images,
+        object_threshold,
+        threshold_method,
     )
 
-    # std = args.std
+    std = args.std
 
     images = find_images(args.image)
     for image_fn in images:
@@ -192,7 +195,7 @@ def main() -> None:
 
         stage = args.repeat if args.repeat else 10
 
-        label_fn = f"{base}.objects{suffix}"
+        label_fn = f"{base}.objects.tiff"
         if stage <= 1 or not os.path.exists(label_fn):
             from dtl.segmentation import segment
             from dtl.utils import filter_segmentation
@@ -216,47 +219,59 @@ def main() -> None:
 
             imwrite(label_fn, label_image, compression="zlib")
         else:
+            logger.info("Loading %s", label_fn)
             label_image = imread(label_fn)
             n_objects = np.max(label_image)
         logger.info("Identified %d objects: %s", n_objects, label_fn)
 
-        # # Spot identification
-        # if args.method == "mean_plus_std_q" and std == args.std:
-        #     # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
-        #     import scipy.stats
+        # Spot identification
+        if args.method == "mean_plus_std_q" and std == args.std:
+            # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
+            import scipy.stats
 
-        #     m, v = scipy.stats.truncnorm(
-        #         -10, scipy.stats.norm.ppf(args.quantile)
-        #     ).stats("mv")
-        #     std = (std - m) / np.sqrt(v)
-        #     logger.info(
-        #         "Adjusted threshold %s to %.3f using normal distribution truncated at cdf=%s",
-        #         args.std,
-        #         std,
-        #         args.quantile,
-        #     )
-        # fun = threshold_method(args.method, std=std, q=args.quantile)
-        # filter_fun = filter_method(args.sigma, args.sigma2)
+            m, v = scipy.stats.truncnorm(
+                -10, scipy.stats.norm.ppf(args.quantile)
+            ).stats("mv")
+            std = (std - m) / np.sqrt(v)
+            logger.info(
+                "Adjusted threshold %s to %.3f using normal distribution truncated at cdf=%s",
+                args.std,
+                std,
+                args.quantile,
+            )
+        fun = threshold_method(args.method, std=std, q=args.quantile)
+        filter_fun = filter_method(args.sigma, args.sigma2)
 
-        # spot1_fn = f"{base}.spot1{suffix}"
-        # im1 = image[args.spot_ch1]
-        # if stage <= 2 or not os.path.exists(spot1_fn):
-        #     label1 = object_threshold(
-        #         filter_fun(im1),
-        #         label_image,
-        #         fun,
-        #         fill_holes=args.fill_holes,
-        #         min_size=args.min_spot_size,
-        #     )
-        #     imwrite(spot1_fn, label1, compression="zlib")
-        # else:
-        #     label1 = imread(spot1_fn)
-        # logger.info(
-        #     "Identified %d spots in channel %d: %s",
-        #     np.max(label1),
-        #     args.spot_ch1,
-        #     spot1_fn,
-        # )
+        spot_fn = f"{base}.spot.tiff"
+        im1 = image[args.spot_ch]
+        if stage <= 2 or not os.path.exists(spot_fn):
+            # thresholding requires an integer image.
+            # convert to uint16
+            logger.info("Filtering spot channel %d", args.spot_ch)
+            filtered = filter_fun(im1)
+            filtered = (
+                (filtered - np.min(filtered)) * (2**16 / np.ptp(filtered))
+            ).astype(np.int_)
+            logger.info("Identifying spots")
+            label1 = object_threshold(
+                filtered,
+                label_image,
+                fun,
+                fill_holes=args.fill_holes,
+                min_size=args.min_spot_size,
+            )
+            imwrite(spot_fn, label1, compression="zlib")
+        else:
+            logger.info("Loading %s", spot_fn)
+            label1 = imread(spot_fn)
+        logger.info(
+            "Identified %d spots in channel %d: %s",
+            np.max(label1),
+            args.spot_ch,
+            spot_fn,
+        )
+
+        # TODO: Identify lamina invaginations
 
         # spot2_fn = f"{base}.spot2{suffix}"
         # im2 = image[args.spot_ch2]
@@ -378,7 +393,7 @@ def main() -> None:
                 else [args.spot_ch, args.lamina_ch]
             )
             # label_image = np.zeros(image[0].shape, dtype=np.uint8)
-            label1 = np.zeros(label_image.shape, dtype=np.uint8)
+            # label1 = np.zeros(label_image.shape, dtype=np.uint8)
             label2 = np.zeros(label_image.shape, dtype=np.uint8)
             viewer = create_viewer(
                 image,

@@ -35,7 +35,7 @@ def segment(
 
     # 0 = greyscale; [[2, 1]] = cells in green (2), nuclei in red (1)
     channels = [[0, 0]]
-    do_3D = img.ndim == 4 and stitch_threshold == 0
+    do_3D = img.shape[0] > 1 and stitch_threshold == 0
 
     array, _flows, _styles = model.eval(
         img,

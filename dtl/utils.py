@@ -285,8 +285,8 @@ def object_threshold(
     total = 0
     for label, _area, bbox in objects:
         # crop for efficiency
-        crop_i = im[bbox[0], bbox[1]]
-        crop_m = label_image[bbox[0], bbox[1]]
+        crop_i = im[bbox]
+        crop_m = label_image[bbox]
         # threshold the object
         target = crop_m == label
         values = crop_i[target]
@@ -299,6 +299,8 @@ def object_threshold(
                 target, fill_holes, out=target
             )
         labels, n = skimage.measure.label(target, return_num=True)
+        # TODO: Watershed to split touching foci
+
         if min_size > 0:
             labels, n = filter_segmentation(
                 labels, border=-1, min_size=min_size
@@ -307,7 +309,7 @@ def object_threshold(
             labels[labels != 0] += total
         total += n
 
-        final_mask[bbox[0], bbox[1]] += labels
+        final_mask[bbox] += labels
 
     return compact_mask(final_mask, m=total)
 
@@ -425,16 +427,21 @@ def filter_method(
     if sigma1 > 0 or sigma2 > sigma1:
 
         def f(im: npt.NDArray[Any]) -> npt.NDArray[Any]:
+            # 2D filtering of YX
+            axes = (im.ndim - 2, im.ndim - 1)
+
             # Foreground smoothing
             im1 = (
-                ndi.gaussian_filter(im, sigma1, mode="mirror")
+                ndi.gaussian_filter(im, sigma1, mode="mirror", axes=axes)
                 if sigma1 > 0
                 else im
             )
 
             if sigma2 > sigma1:
                 # Background subtraction
-                background = ndi.gaussian_filter(im, sigma2, mode="mirror")
+                background = ndi.gaussian_filter(
+                    im, sigma2, mode="mirror", axes=axes
+                )
                 # Do not allow negative values but return as same datatype
                 # to support unsigned int images.
                 result = im1.astype(np.float64) - background
