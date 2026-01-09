@@ -39,6 +39,12 @@ def main() -> None:
         type=float,
         help="Scale (um/px) (default: %(default)s)",
     )
+    _ = parser.add_argument(
+        "--anisotropy",
+        default=2 / 0.65,
+        type=float,
+        help="Anisotropy (scale of z-dimension) (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("Object Options")
     _ = group.add_argument(
@@ -345,6 +351,7 @@ def main() -> None:
                 label1,
                 im2,
                 label2,
+                anisotropy=args.anisotropy,
             )
 
             formatted = format_spot_results(results, scale=args.scale)

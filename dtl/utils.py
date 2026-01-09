@@ -16,6 +16,8 @@ from scipy import ndimage as ndi
 from skimage.segmentation import clear_border
 from skimage.util import map_array
 
+_OFFSET = 0.0
+
 
 def find_images(
     files: list[str],
@@ -317,6 +319,7 @@ def spot_analysis(
     label1: npt.NDArray[Any],
     im2: npt.NDArray[Any],
     label2: npt.NDArray[Any],
+    anisotropy: float = 1.0,
 ) -> list[tuple[int | float, ...]]:
     """Analyse spots in image 1 within parent objects.
 
@@ -344,6 +347,7 @@ def spot_analysis(
         label1: First image object labels (spots).
         im2: Second image.
         label2: Second image object labels (internal objects).
+        anisotropy: Anisotropy scaling applied to z dimension.
 
     Returns:
         analysis results
@@ -368,16 +372,17 @@ def spot_analysis(
         z, y, x = np.nonzero(
             _find_border(c_label_, [x + 1 for x in range(len(id_))])
         )
-        tree1 = scipy.spatial.KDTree(np.column_stack([x, y, z]))
+        tree1 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))
         # TODO: Add option to find distance to border or centroid of internal objects
         z, y, x = np.nonzero(
             _find_border(c_label2, [x + 1 for x in range(len(id2))])
         )
-        tree2 = scipy.spatial.KDTree(np.column_stack([x, y, z]))
+        tree2 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))
         for i, d in enumerate(data1):
-            # Compute distance to borders
-            offset = np.array([ox, oy, oz])
+            # Compute distance to borders. Note the centroids are offset.
+            offset = np.array([ox, oy, oz]) + _OFFSET
             coords = np.array(d[-3:]) - offset
+            coords[2] *= anisotropy
             r1 = tree1.query(coords)
             r2 = tree2.query(coords)
             # Save closest
@@ -387,6 +392,7 @@ def spot_analysis(
             else:
                 r = r2
                 c = tree2.data[r2[1]]
+            c[2] = round(c[2] / anisotropy)
             c = c + offset
             results.append(
                 (
@@ -406,6 +412,19 @@ def spot_analysis(
             )
 
     return results
+
+
+def _to_coords(
+    x: npt.NDArray[np.int_],
+    y: npt.NDArray[np.int_],
+    z: npt.NDArray[np.int_],
+    anisotropy: float,
+) -> npt.NDArray[np.float64]:
+    """Convert indices to coordinates."""
+    xx = x.astype(np.float64)
+    yy = y.astype(np.float64)
+    zz = z.astype(np.float64) * anisotropy
+    return np.column_stack([xx, yy, zz])
 
 
 def filter_segmentation(
@@ -499,7 +518,7 @@ def analyse_objects(
 ) -> list[tuple[float, float, float, float]]:
     """Extract the intensity and centroids for all labelled objects.
 
-    Centroids use (0.5, 0.5, 0.5) as the centre of voxels.
+    Centroids use _OFFSET as the centre of voxels.
 
     Args:
         im: Image.
@@ -520,9 +539,9 @@ def analyse_objects(
         weights = crop_image[mask].ravel()
         weights = weights / weights.sum()
         cz, cy, cx = (
-            float(np.sum(z * weights) + bbox[0].start + offset[0] + 0.5),
-            float(np.sum(y * weights) + bbox[1].start + offset[1] + 0.5),
-            float(np.sum(x * weights) + bbox[2].start + offset[2] + 0.5),
+            float(np.sum(z * weights) + bbox[0].start + offset[0] + _OFFSET),
+            float(np.sum(y * weights) + bbox[1].start + offset[1] + _OFFSET),
+            float(np.sum(x * weights) + bbox[2].start + offset[2] + _OFFSET),
         )
         data.append((intensity, cx, cy, cz))
 
