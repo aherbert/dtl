@@ -77,14 +77,7 @@ class _AnalysisWidget(QWidget):  # type: ignore[misc]
 
         # Features must match the displayed image
         o_layer.features = _to_features(label_df, np.max(label_image))
-        s_layer1.features = _to_features(
-            spot_df, np.max(spot_image1), channel=1
-        )
-        if spot_image2 is not None:
-            s_layer2.data = spot_image2
-        s_layer2.features = _to_features(
-            spot_df, np.max(spot_image2), channel=2
-        )
+        s_layer1.features = _to_features(spot_df, np.max(spot_image1))
 
 
 def show_analysis(
@@ -188,22 +181,32 @@ def create_viewer(
     labels1 = viewer.add_labels(
         spot_image1,
         name="Spots 1",
-        features=_to_features(spot_df, np.max(spot_image1), channel=1),
+        features=_to_features(spot_df, np.max(spot_image1)),
     )
     labels1.preserve_labels = True
     labels2 = viewer.add_labels(
         spot_image2,
         name="Spots 2",
-        features=_to_features(spot_df, np.max(spot_image2), channel=2),
         # Avoid color clash if all spots overlap
         colormap=napari.utils.colormaps.label_colormap(seed=0.12345),
     )
     labels2.preserve_labels = True
 
-    viewer.window.add_plugin_dock_widget("napari", "Features table widget")
+    if (vectors := _to_vectors(spot_df)) is not None:
+        _ = viewer.add_vectors(
+            vectors,
+            name="Distances",
+            ndim=3,
+            out_of_slice_display=True,
+        )
 
     viewer.reset_view()
-    viewer.layers.selection.active = object_labels
+    viewer.layers.selection.active = labels1
+
+    # Note: A bug in napari features table widget causes an error when used
+    # with the Vectors layer. The workaround is to add the widget when the
+    # layer is not selected.
+    viewer.window.add_plugin_dock_widget("napari", "Features table widget")
 
     return viewer
 
@@ -316,14 +319,12 @@ def _generate_color_map(channel_names: list[str]) -> list[str | Colormap]:
     ]
 
 
-def _to_features(
-    df: pd.DataFrame | None, size: int, channel: int | None = None
-) -> pd.DataFrame | None:
+def _to_features(df: pd.DataFrame | None, size: int) -> pd.DataFrame | None:
     """Convert data to a features table."""
     if df is None:
         return None
-    if channel is not None and "channel" in df.columns:
-        df = df[df["channel"] == channel].copy()
+    # if channel is not None and "channel" in df.columns:
+    #     df = df[df["channel"] == channel].copy()
     if len(df) != size:
         return None
     # Order by label
@@ -331,3 +332,13 @@ def _to_features(
     # Insert an empty row for the background label
     df = pd.concat([pd.DataFrame([{col: 0 for col in df.columns}]), df])
     return df
+
+
+def _to_vectors(df: pd.DataFrame | None) -> npt.NDArray[Any] | None:
+    """Convert data to vectors data."""
+    if df is None:
+        return None
+    # Dimensions order is reversed
+    origin = df[["cz", "cy", "cx"]].values
+    direction = df[["oz", "oy", "ox"]].values - origin
+    return np.stack([origin, direction], axis=1)
