@@ -131,7 +131,7 @@ def main() -> None:
         "--view",
         default=False,
         action=argparse.BooleanOptionalAction,
-        help="Show results in graphical viewer",
+        help="Show results in graphical viewer (default: %(default)s)",
     )
     _ = group.add_argument(
         "--channel-names", nargs="+", default=[], help="Channel names"
@@ -148,6 +148,12 @@ def main() -> None:
         default=99.999,
         type=float,
         help="Upper contrast limit (percentile) (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--aniso",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Use anisotropy in graphical viewer (default: %(default)s)",
     )
 
     group = parser.add_argument_group("Other Options")
@@ -416,6 +422,7 @@ def main() -> None:
                 label_df=label_df,
                 spot_df=spot_df,
                 upper_limit=args.upper_limit,
+                anisotropy=args.anisotropy if args.aniso else 1.0,
             )
 
             # # Allow recomputation of features

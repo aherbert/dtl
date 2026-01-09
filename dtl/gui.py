@@ -57,12 +57,15 @@ class _AnalysisWidget(QWidget):  # type: ignore[misc]
         o_layer = viewer.layers["Objects"]
         s_layer1 = viewer.layers["Spots 1"]
         s_layer2 = viewer.layers["Spots 2"]
+        d_layer = viewer.layers["Distances"]
         label_image = o_layer.data
         spot_image1 = s_layer1.data
         spot_image2 = s_layer2.data
         label_image_a, spot_image1_a, spot_image2_a, label_df, spot_df = (
             self.analysis_fun(label_image, spot_image1, spot_image2)
         )
+
+        anisotropy = o_layer.scale[0]
 
         # Images may be updated
         if label_image_a is not None:
@@ -76,8 +79,13 @@ class _AnalysisWidget(QWidget):  # type: ignore[misc]
             spot_image2 = spot_image2_a
 
         # Features must match the displayed image
-        o_layer.features = _to_features(label_df, np.max(label_image))
-        s_layer1.features = _to_features(spot_df, np.max(spot_image1))
+        o_layer.features = _to_features(
+            label_df, np.max(label_image), anisotropy
+        )
+        s_layer1.features = _to_features(
+            spot_df, np.max(spot_image1), anisotropy
+        )
+        d_layer.data = _to_vectors(spot_df)
 
 
 def show_analysis(
@@ -133,6 +141,7 @@ def create_viewer(
     label_df: pd.DataFrame | None = None,
     spot_df: pd.DataFrame | None = None,
     upper_limit: float = 100,
+    anisotropy: float = 1.0,
 ) -> napari.Viewer:
     """Show the spot analysis images.
 
@@ -149,6 +158,7 @@ def create_viewer(
         label_df: DataFrame with 1 row per label.
         spot_df: DataFrame with 1 row per label for each channel.
         upper_limit: Upper limit (percentile) for contrast display range.
+        anisotropy: Anisotropy scaling applied to z dimension.
     """
     viewer = napari.Viewer()
     n = image.shape[0]
@@ -159,8 +169,9 @@ def create_viewer(
             channel_names.append("Channel " + str(len(channel_names)))
     colors = _generate_color_map(channel_names)
     # Add image layers
+    scale = (anisotropy, 1.0, 1.0)
     for i, im in enumerate(image):
-        layer = viewer.add_image(im)
+        layer = viewer.add_image(im, scale=scale)
         im_min, im_max = np.min(im), np.max(im)
         layer.contrast_limits_range = (im_min, im_max)
         if upper_limit < 100:
@@ -173,7 +184,8 @@ def create_viewer(
     object_labels = viewer.add_labels(
         label_image,
         name="Objects",
-        features=_to_features(label_df, np.max(label_image)),
+        features=_to_features(label_df, np.max(label_image), anisotropy),
+        scale=scale,
     )
     object_labels.preserve_labels = True
     object_labels.contour = 1
@@ -181,7 +193,8 @@ def create_viewer(
     labels1 = viewer.add_labels(
         spot_image1,
         name="Spots 1",
-        features=_to_features(spot_df, np.max(spot_image1)),
+        features=_to_features(spot_df, np.max(spot_image1), anisotropy),
+        scale=scale,
     )
     labels1.preserve_labels = True
     labels2 = viewer.add_labels(
@@ -189,6 +202,7 @@ def create_viewer(
         name="Spots 2",
         # Avoid color clash if all spots overlap
         colormap=napari.utils.colormaps.label_colormap(seed=0.12345),
+        scale=scale,
     )
     labels2.preserve_labels = True
 
@@ -198,6 +212,7 @@ def create_viewer(
             name="Distances",
             ndim=3,
             out_of_slice_display=True,
+            scale=scale,
         )
 
     viewer.reset_view()
@@ -319,16 +334,24 @@ def _generate_color_map(channel_names: list[str]) -> list[str | Colormap]:
     ]
 
 
-def _to_features(df: pd.DataFrame | None, size: int) -> pd.DataFrame | None:
+def _to_features(
+    df: pd.DataFrame | None, size: int, anisotropy: float
+) -> pd.DataFrame | None:
     """Convert data to a features table."""
     if df is None:
         return None
-    # if channel is not None and "channel" in df.columns:
-    #     df = df[df["channel"] == channel].copy()
     if len(df) != size:
         return None
     # Order by label
     df.sort_values("label", inplace=True)
+
+    if anisotropy != 1.0:
+        df = df.copy()
+        # Known z columns
+        for col in ["cz", "oz"]:
+            if col in df.columns:
+                df[col] = df[col] * anisotropy
+
     # Insert an empty row for the background label
     df = pd.concat([pd.DataFrame([{col: 0 for col in df.columns}]), df])
     return df
