@@ -264,9 +264,9 @@ def main() -> None:
         fun = threshold_method(args.method, std=std, q=args.quantile)
         filter_fun = filter_method(args.sigma, args.sigma2)
 
-        spot_fn = f"{base}.spots.tiff"
+        spots_fn = f"{base}.spots.tiff"
         im1 = image[args.spot_ch]
-        if stage <= 2 or not os.path.exists(spot_fn):
+        if stage <= 2 or not os.path.exists(spots_fn):
             # thresholding requires an integer image.
             # convert to uint16
             logger.info("Filtering spot channel %d", args.spot_ch)
@@ -282,15 +282,15 @@ def main() -> None:
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
             )
-            imwrite(spot_fn, label1, compression="zlib")
+            imwrite(spots_fn, label1, compression="zlib")
         else:
-            logger.info("Loading %s", spot_fn)
-            label1 = imread(spot_fn)
+            logger.info("Loading %s", spots_fn)
+            label1 = imread(spots_fn)
         logger.info(
             "Identified %d spots in channel %d: %s",
             np.max(label1),
             args.spot_ch,
-            spot_fn,
+            spots_fn,
         )
 
         # TODO: Identify lamina invaginations.
@@ -398,11 +398,14 @@ def main() -> None:
         if args.view:
             logger.info("Launching viewer")
             import pandas as pd
+            from skimage.measure import label
 
             from dtl.gui import (
+                add_analysis_function,
                 create_viewer,
                 show_viewer,
             )
+            from dtl.utils import compact_mask
 
             label_df = pd.read_csv(summary_fn)
             spot_df = pd.read_csv(spot_fn)
@@ -425,47 +428,47 @@ def main() -> None:
                 anisotropy=args.anisotropy if args.aniso else 1.0,
             )
 
-            # # Allow recomputation of features
-            # def redo_analysis_fun(
-            #     label_image: npt.NDArray[Any],
-            #     label1: npt.NDArray[Any],
-            #     label2: npt.NDArray[Any],
-            #     # fix values for loop variables
-            #     label_fn: str = label_fn,
-            #     spot1_fn: str = spot1_fn,
-            #     spot2_fn: str = spot2_fn,
-            #     summary_fn: str = summary_fn,
-            #     spot_fn: str = spot_fn,
-            # ) -> tuple[
-            #     npt.NDArray[Any] | None,
-            #     npt.NDArray[Any] | None,
-            #     npt.NDArray[Any] | None,
-            #     pd.DataFrame | None,
-            #     pd.DataFrame | None,
-            # ]:
-            #     logger.info("Repeating analysis")
-            #     # Manual editing may duplicate label IDs
-            #     label_image, m = label(label_image, return_num=True)
-            #     label1, m1 = label(label1, return_num=True)
-            #     label2, m2 = label(label2, return_num=True)
-            #     label_image = compact_mask(label_image, m=m)
-            #     label1 = compact_mask(label1, m=m1)
-            #     label2 = compact_mask(label2, m=m2)
+            # Allow recomputation of features
+            def redo_analysis_fun(
+                label_image: npt.NDArray[Any],
+                label1: npt.NDArray[Any],
+                label2: npt.NDArray[Any],
+                # fix values for loop variables
+                label_fn: str = label_fn,
+                spots_fn: str = spots_fn,
+                lamina_fn: str = lamina_fn,
+                summary_fn: str = summary_fn,
+                spot_fn: str = spot_fn,
+            ) -> tuple[
+                npt.NDArray[Any] | None,
+                npt.NDArray[Any] | None,
+                npt.NDArray[Any] | None,
+                pd.DataFrame | None,
+                pd.DataFrame | None,
+            ]:
+                logger.info("Repeating analysis")
+                # Manual editing may duplicate label IDs
+                label_image, m = label(label_image, return_num=True)
+                label1, m1 = label(label1, return_num=True)
+                label2, m2 = label(label2, return_num=True)
+                label_image = compact_mask(label_image, m=m)
+                label1 = compact_mask(label1, m=m1)
+                label2 = compact_mask(label2, m=m2)
 
-            #     # Save new labels
-            #     imwrite(label_fn, label_image, compression="zlib")
-            #     imwrite(spot1_fn, label1, compression="zlib")
-            #     imwrite(spot2_fn, label2, compression="zlib")
+                # Save new labels
+                imwrite(label_fn, label_image, compression="zlib")
+                imwrite(spots_fn, label1, compression="zlib")
+                imwrite(lamina_fn, label2, compression="zlib")
 
-            #     analysis_fun(label_image, label1, label2)
+                analysis_fun(label_image, label1, label2)
 
-            #     # Reload analysis
-            #     label_df = pd.read_csv(summary_fn)
-            #     spot_df = pd.read_csv(spot_fn)
+                # Reload analysis
+                label_df = pd.read_csv(summary_fn)
+                spot_df = pd.read_csv(spot_fn)
 
-            #     return label_image, label1, label2, label_df, spot_df
+                return label_image, label1, label2, label_df, spot_df
 
-            # add_analysis_function(viewer, redo_analysis_fun)
+            add_analysis_function(viewer, redo_analysis_fun)
 
             show_viewer(viewer)
 
