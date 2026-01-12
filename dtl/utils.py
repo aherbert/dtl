@@ -619,7 +619,9 @@ def format_spot_results(
     if scale:
         out[0] = out[0] + ("distance (μm)",)
     for data in results:
-        formatted = data
+        # Change type
+        t = 'edge' if data[-2] == 0 else 'internal'
+        formatted = data[:-2] + (t,) + data[-1:]
         if scale:
             formatted = formatted + (data[-1] * scale,)
         out.append(formatted)
