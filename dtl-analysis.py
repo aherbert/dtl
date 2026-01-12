@@ -82,37 +82,71 @@ def main() -> None:
         help="Minimum object size (pixels) (default: %(default)s)",
     )
 
-    group = parser.add_argument_group("Threshold Options")
+    group = parser.add_argument_group("Spot Threshold Options")
     _ = group.add_argument(
-        "--sigma",
+        "--spot-sigma",
         default=1.5,
         type=float,
         help="Gaussian smoothing filter standard deviation (default: %(default)s)",
     )
     _ = group.add_argument(
-        "--sigma2",
+        "--spot-sigma2",
         default=0,
         type=float,
         help="Background Gaussian smoothing filter standard deviation (default: %(default)s)",
     )
     _ = group.add_argument(
-        "--method",
+        "--spot-method",
         default="otsu",
         choices=["mean_plus_std", "mean_plus_std_q", "otsu", "yen", "minimum"],
         help="Thresholding method (default: %(default)s)",
     )
     _ = group.add_argument(
-        "--std",
+        "--spot-std",
         default=7,
         type=float,
         help="Std.dev above the mean (default: %(default)s)",
     )
     _ = group.add_argument(
-        "--quantile",
+        "--spot-quantile",
         default=0.75,
         type=float,
         help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
     )
+
+    group = parser.add_argument_group("Lamina Threshold Options")
+    _ = group.add_argument(
+        "--lamina-sigma",
+        default=1.5,
+        type=float,
+        help="Gaussian smoothing filter standard deviation (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-sigma2",
+        default=0,
+        type=float,
+        help="Background Gaussian smoothing filter standard deviation (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-method",
+        default="mean_plus_std_q",
+        choices=["mean_plus_std", "mean_plus_std_q", "otsu", "yen", "minimum"],
+        help="Thresholding method (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-std",
+        default=10,
+        type=float,
+        help="Std.dev above the mean (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-quantile",
+        default=0.75,
+        type=float,
+        help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
+    )
+
+    group = parser.add_argument_group("Threshold Options")
     _ = group.add_argument(
         "--fill-holes",
         default=2,
@@ -202,7 +236,8 @@ def main() -> None:
         threshold_method,
     )
 
-    std = args.std
+    spot_std = args.spot_std
+    lamina_std = args.lamina_std
 
     images = find_images(args.image)
     for image_fn in images:
@@ -247,30 +282,30 @@ def main() -> None:
         logger.info("Identified %d objects: %s", n_objects, label_fn)
 
         # Spot identification
-        if args.method == "mean_plus_std_q" and std == args.std:
-            # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
-            import scipy.stats
-
-            m, v = scipy.stats.truncnorm(
-                -10, scipy.stats.norm.ppf(args.quantile)
-            ).stats("mv")
-            std = (std - m) / np.sqrt(v)
-            logger.info(
-                "Adjusted threshold %s to %.3f using normal distribution truncated at cdf=%s",
-                args.std,
-                std,
-                args.quantile,
-            )
-        fun = threshold_method(args.method, std=std, q=args.quantile)
-        filter_fun = filter_method(args.sigma, args.sigma2)
-
         spots_fn = f"{base}.spots.tiff"
         im1 = image[args.spot_ch]
         if stage <= 2 or not os.path.exists(spots_fn):
+            if args.spot_method == "mean_plus_std_q" and spot_std == args.spot_std:
+                # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
+                import scipy.stats
+
+                m, v = scipy.stats.truncnorm(
+                    -10, scipy.stats.norm.ppf(args.spot_quantile)
+                ).stats("mv")
+                spot_std = (spot_std - m) / np.sqrt(v)
+                logger.info(
+                    "Adjusted spot threshold %s to %.3f using normal distribution truncated at cdf=%s",
+                    args.spot_std,
+                    spot_std,
+                    args.spot_quantile,
+                )
+            spot_fun = threshold_method(args.spot_method, std=spot_std, q=args.spot_quantile)
+            spot_filter_fun = filter_method(args.spot_sigma, args.spot_sigma2)
+
             # thresholding requires an integer image.
             # convert to uint16
             logger.info("Filtering spot channel %d", args.spot_ch)
-            filtered = filter_fun(im1)
+            filtered = spot_filter_fun(im1)
             filtered = (
                 (filtered - np.min(filtered)) * (2**16 / np.ptp(filtered))
             ).astype(np.int_)
@@ -278,7 +313,7 @@ def main() -> None:
             label1 = object_threshold(
                 filtered,
                 label_image,
-                fun,
+                spot_fun,
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
             )
@@ -293,35 +328,48 @@ def main() -> None:
             spots_fn,
         )
 
-        # TODO: Identify lamina invaginations.
-        # Lamina may have invaginations (spots) inside the nucleus or a peripheral ring
-        # when the plane intersects the membrane.
-        # For now set as empty.
-        label2 = np.zeros(label_image.shape, dtype=np.uint8)
-
+        # Lamina identification
+        # Lamina may have invaginations (spots) inside the nucleus
+        # or a peripheral ring when the plane intersects the membrane.
         lamina_fn = f"{base}.lamina.tiff"
         im2 = image[args.lamina_ch]
-        # if stage <= 2 or not os.path.exists(lamina_fn):
-        #     # thresholding requires an integer image.
-        #     # convert to uint16
-        #     logger.info("Filtering lamina channel %d", args.lamina_ch)
-        #     filtered = filter_fun(im2)
-        #     filtered = (
-        #         (filtered - np.min(filtered)) * (2**16 / np.ptp(filtered))
-        #     ).astype(np.int_)
-        #     logger.info("Identifying lamina")
-        #     label2 = object_threshold(
-        #         filtered,
-        #         label_image,
-        #         fun,
-        #         fill_holes=args.fill_holes,
-        #         min_size=args.min_spot_size,
-        #     )
-        #     imwrite(lamina_fn, label2, compression="zlib")
-        # else:
-        #     logger.info("Loading %s", lamina_fn)
-        #     label2 = imread(lamina_fn)
-        # TODO: What to log as the lamina may have internal spots but also an edge halo
+        if stage <= 2 or not os.path.exists(lamina_fn):
+            if args.lamina_method == "mean_plus_std_q" and lamina_std == args.lamina_std:
+                # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
+                import scipy.stats
+
+                m, v = scipy.stats.truncnorm(
+                    -10, scipy.stats.norm.ppf(args.lamina_quantile)
+                ).stats("mv")
+                lamina_std = (lamina_std - m) / np.sqrt(v)
+                logger.info(
+                    "Adjusted spot threshold %s to %.3f using normal distribution truncated at cdf=%s",
+                    args.lamina_std,
+                    lamina_std,
+                    args.lamina_quantile,
+                )
+            lamina_fun = threshold_method(args.lamina_method, std=lamina_std, q=args.lamina_quantile)
+            lamina_filter_fun = filter_method(args.lamina_sigma, args.lamina_sigma2)
+
+            # thresholding requires an integer image.
+            # convert to uint16
+            logger.info("Filtering lamina channel %d", args.lamina_ch)
+            filtered = lamina_filter_fun(im2)
+            filtered = (
+                (filtered - np.min(filtered)) * (2**16 / np.ptp(filtered))
+            ).astype(np.int_)
+            logger.info("Identifying lamina")
+            label2 = object_threshold(
+                filtered,
+                label_image,
+                lamina_fun,
+                fill_holes=args.fill_holes,
+                min_size=args.min_spot_size,
+            )
+            imwrite(lamina_fn, label2, compression="zlib")
+        else:
+            logger.info("Loading %s", lamina_fn)
+            label2 = imread(lamina_fn)
         logger.info(
             "Identified %d lamina spots in channel %d: %s",
             np.max(label2),
