@@ -162,7 +162,7 @@ def main() -> None:
     )
     _ = group.add_argument(
         "--min-spot-size",
-        default=4,
+        default=6,
         type=int,
         help="Minimum spot size (pixels) (default: %(default)s)",
     )
