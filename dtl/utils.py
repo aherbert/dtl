@@ -368,7 +368,6 @@ def spot_analysis(
         objects1 = find_objects(c_label1)
         data1 = analyse_objects(c_im1, c_label1, objects1, (oz, oy, ox))
         # Borders as KD-tree
-        # TODO: Add anisotropy for z axis
         z, y, x = np.nonzero(
             _find_border(c_label_, [x + 1 for x in range(len(id_))])
         )
@@ -620,7 +619,7 @@ def format_spot_results(
         out[0] = out[0] + ("distance (μm)",)
     for data in results:
         # Change type
-        t = 'edge' if data[-2] == 0 else 'internal'
+        t = "edge" if data[-2] == 0 else "internal"
         formatted = data[:-2] + (t,) + data[-1:]
         if scale:
             formatted = formatted + (data[-1] * scale,)
