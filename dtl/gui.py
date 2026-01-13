@@ -205,6 +205,7 @@ def create_viewer(
         scale=scale,
     )
     labels2.preserve_labels = True
+    labels2.visible = False
 
     if (vectors := _to_vectors(spot_df)) is not None:
         _ = viewer.add_vectors(
