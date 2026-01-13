@@ -113,6 +113,13 @@ def main() -> None:
         type=float,
         help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
     )
+    _ = group.add_argument(
+        "--spot-split",
+        type=int,
+        default=2,
+        choices=[0, 1, 2],
+        help="Split using watershed: 1=Distance transform; 2=Image (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("Lamina Threshold Options")
     _ = group.add_argument(
@@ -285,7 +292,10 @@ def main() -> None:
         spots_fn = f"{base}.spots.tiff"
         im1 = image[args.spot_ch]
         if stage <= 2 or not os.path.exists(spots_fn):
-            if args.spot_method == "mean_plus_std_q" and spot_std == args.spot_std:
+            if (
+                args.spot_method == "mean_plus_std_q"
+                and spot_std == args.spot_std
+            ):
                 # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
                 import scipy.stats
 
@@ -299,7 +309,9 @@ def main() -> None:
                     spot_std,
                     args.spot_quantile,
                 )
-            spot_fun = threshold_method(args.spot_method, std=spot_std, q=args.spot_quantile)
+            spot_fun = threshold_method(
+                args.spot_method, std=spot_std, q=args.spot_quantile
+            )
             spot_filter_fun = filter_method(args.spot_sigma, args.spot_sigma2)
 
             # thresholding requires an integer image.
@@ -316,6 +328,7 @@ def main() -> None:
                 spot_fun,
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
+                split_objects=args.spot_split,
             )
             imwrite(spots_fn, label1, compression="zlib")
         else:
@@ -334,7 +347,10 @@ def main() -> None:
         lamina_fn = f"{base}.lamina.tiff"
         im2 = image[args.lamina_ch]
         if stage <= 2 or not os.path.exists(lamina_fn):
-            if args.lamina_method == "mean_plus_std_q" and lamina_std == args.lamina_std:
+            if (
+                args.lamina_method == "mean_plus_std_q"
+                and lamina_std == args.lamina_std
+            ):
                 # make std shift equivalent to get the same thresholding level if a normal distribution is truncated
                 import scipy.stats
 
@@ -348,8 +364,12 @@ def main() -> None:
                     lamina_std,
                     args.lamina_quantile,
                 )
-            lamina_fun = threshold_method(args.lamina_method, std=lamina_std, q=args.lamina_quantile)
-            lamina_filter_fun = filter_method(args.lamina_sigma, args.lamina_sigma2)
+            lamina_fun = threshold_method(
+                args.lamina_method, std=lamina_std, q=args.lamina_quantile
+            )
+            lamina_filter_fun = filter_method(
+                args.lamina_sigma, args.lamina_sigma2
+            )
 
             # thresholding requires an integer image.
             # convert to uint16
