@@ -114,6 +114,12 @@ def main() -> None:
         help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
     )
     _ = group.add_argument(
+        "--spot-global",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use threshold across all objects; else threshold within each object (default: %(default)s)",
+    )
+    _ = group.add_argument(
         "--spot-split",
         type=int,
         default=2,
@@ -151,6 +157,12 @@ def main() -> None:
         default=0.75,
         type=float,
         help="Quantile for lowest value used in mean_plus_std_q (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-global",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use threshold across all objects; else threshold within each object (default: %(default)s)",
     )
 
     group = parser.add_argument_group("Threshold Options")
@@ -247,6 +259,7 @@ def main() -> None:
     lamina_std = args.lamina_std
 
     images = find_images(args.image)
+    logger.info("Identified %d images", len(images))
     for image_fn in images:
         logger.info("Processing %s", image_fn)
         base, suffix = os.path.splitext(image_fn)
@@ -329,6 +342,7 @@ def main() -> None:
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
                 split_objects=args.spot_split,
+                global_threshold=args.spot_global,
             )
             imwrite(spots_fn, label1, compression="zlib")
         else:
@@ -385,6 +399,7 @@ def main() -> None:
                 lamina_fun,
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
+                global_threshold=args.lamina_global,
             )
             imwrite(lamina_fn, label2, compression="zlib")
         else:

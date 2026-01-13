@@ -1,6 +1,7 @@
 """Utility functions."""
 
 import csv
+import logging
 import math
 import os
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from skimage.segmentation import clear_border, watershed
 from skimage.util import map_array
 
 _OFFSET = 0.0
+logger = logging.getLogger(__name__)
 
 
 def find_images(
@@ -118,6 +120,7 @@ def object_threshold(
     fill_holes: int = 0,
     min_size: int = 0,
     split_objects: int = 0,
+    global_threshold: bool = False,
 ) -> npt.NDArray[Any]:
     """Threshold the pixels in each masked object.
 
@@ -133,6 +136,7 @@ def object_threshold(
         fill_holes: Remove contiguous holes smaller than the specified size.
         min_size: Minimum size of thresholded regions.
         split_objects: Split objects using a watershed based on: 1=EDT; 2=image.
+        global_threshold: Apply thresholding to all object values together; else each object separately.
 
     Returns:
         mask of thresholded objects
@@ -141,15 +145,29 @@ def object_threshold(
         objects = find_objects(label_image)
     final_mask = np.zeros(im.shape, dtype=int)
     total = 0
+
+    if global_threshold:
+        data = []
+        for label, _area, bbox in objects:
+            crop_i = im[bbox]
+            crop_m = label_image[bbox]
+            target = crop_m == label
+            data.append(crop_i[target])
+        h = np.bincount(np.concatenate(data))
+        t = fun(h)
+        logger.info("Global threshold: %d", t)
+
     for label, _area, bbox in objects:
         # crop for efficiency
         crop_i = im[bbox]
         crop_m = label_image[bbox]
         # threshold the object
         target = crop_m == label
-        values = crop_i[target]
-        h = np.bincount(values.ravel())
-        t = fun(h)
+        if not global_threshold:
+            values = crop_i[target]
+            h = np.bincount(values.ravel())
+            t = fun(h)
+            logger.info("Label %d threshold: %d", label, t)
         # create labels
         target = target & (crop_i > t)
         if fill_holes:
