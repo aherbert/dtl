@@ -355,6 +355,7 @@ def spot_analysis(
     im2: npt.NDArray[Any],
     label2: npt.NDArray[Any],
     anisotropy: float = 1.0,
+    remove_internal_edge: bool = False,
 ) -> list[tuple[int | float, ...]]:
     """Analyse spots in image 1 within parent objects.
 
@@ -383,6 +384,7 @@ def spot_analysis(
         im2: Second image.
         label2: Second image object labels (internal objects).
         anisotropy: Anisotropy scaling applied to z dimension.
+        remove_internal_edge: Ignore distances to internal objects that touch the parent edge.
 
     Returns:
         analysis results
@@ -403,14 +405,22 @@ def spot_analysis(
         objects1 = find_objects(c_label1)
         data1 = analyse_objects(c_im1, c_label1, objects1, (oz, oy, ox))
         # Borders as KD-tree
-        z, y, x = np.nonzero(
-            _find_border(c_label_, [x + 1 for x in range(len(id_))])
+        parent_border = _find_border(
+            c_label_, [x + 1 for x in range(len(id_))]
         )
+        z, y, x = np.nonzero(parent_border)
         tree1 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))
+        # Option to remove internal objects touching the edge
+        internal_labels = [x + 1 for x in range(len(id2))]
+        if remove_internal_edge:
+            h = np.bincount(
+                c_label2[parent_border != 0].ravel(), minlength=len(id2) + 1
+            )
+            # Ignore bin 0 of histogram and keep labels with no count
+            h = np.delete(h, 0)
+            internal_labels = list(np.array(internal_labels)[h == 0])
         # TODO: Add option to find distance to border or centroid of internal objects
-        z, y, x = np.nonzero(
-            _find_border(c_label2, [x + 1 for x in range(len(id2))])
-        )
+        z, y, x = np.nonzero(_find_border(c_label2, internal_labels))
         tree2 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))
         for i, d in enumerate(data1):
             # Compute distance to borders. Note the centroids are offset.

@@ -179,6 +179,14 @@ def main() -> None:
         help="Minimum spot size (pixels) (default: %(default)s)",
     )
 
+    group = parser.add_argument_group("Distance Options")
+    _ = group.add_argument(
+        "--lamina-edge",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Include distances to lamina objects that touch the edge; else ignore as edge (default: %(default)s)",
+    )
+
     group = parser.add_argument_group("View Options")
     _ = group.add_argument(
         "--view",
@@ -441,6 +449,7 @@ def main() -> None:
                 im2,
                 label2,
                 anisotropy=args.anisotropy,
+                remove_internal_edge=not args.lamina_edge,
             )
 
             formatted = format_spot_results(results, scale=args.scale)
