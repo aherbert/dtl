@@ -54,7 +54,7 @@ def _is_image(fn: str) -> bool:
     """Check if the file is a target image."""
     base, suffix = os.path.splitext(fn)
     suffix = suffix.lower()
-    if suffix == ".ics":
+    if suffix == ".ics" or suffix == ".czi":
         return True
     if suffix == ".tiff":
         # Require CZYX. Ignores result image masks (YX) from a directory.
