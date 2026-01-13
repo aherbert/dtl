@@ -21,8 +21,8 @@ source .venv/bin/activate
 ```
 
 Install the maven and Java prerequisites for the
-[BioIO](https://bioio-devs.github.io/bioio/OVERVIEW.html) library using the BioFormats
-plugin [bioio-bioformats](https://github.com/bioio-devs/bioio-bioformats?tab=readme-ov-file#special-installation-instructions).
+[BioIO](https://bioio-devs.github.io/bioio/OVERVIEW.html) library to use BioFormats.
+See [bioio-bioformats](https://github.com/bioio-devs/bioio-bioformats?tab=readme-ov-file#special-installation-instructions).
 
 ## Updating
 
