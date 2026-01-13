@@ -359,7 +359,7 @@ def main() -> None:
                 ).stats("mv")
                 lamina_std = (lamina_std - m) / np.sqrt(v)
                 logger.info(
-                    "Adjusted spot threshold %s to %.3f using normal distribution truncated at cdf=%s",
+                    "Adjusted lamina threshold %s to %.3f using normal distribution truncated at cdf=%s",
                     args.lamina_std,
                     lamina_std,
                     args.lamina_quantile,
