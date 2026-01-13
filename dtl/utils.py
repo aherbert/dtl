@@ -401,6 +401,7 @@ def spot_analysis(
         c_label2, id2 = relabel(label2[bbox] * mask)
         c_im1 = im1[bbox]
         oz, oy, ox = bbox[0].start, bbox[1].start, bbox[2].start
+        offset = np.array([ox, oy, oz]) + _OFFSET
         # Objects
         objects1 = find_objects(c_label1)
         data1 = analyse_objects(c_im1, c_label1, objects1, (oz, oy, ox))
@@ -424,7 +425,6 @@ def spot_analysis(
         tree2 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))
         for i, d in enumerate(data1):
             # Compute distance to borders. Note the centroids are offset.
-            offset = np.array([ox, oy, oz]) + _OFFSET
             coords = np.array(d[-3:]) - offset
             coords[2] *= anisotropy
             r1 = tree1.query(coords)
