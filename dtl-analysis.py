@@ -102,6 +102,12 @@ def main() -> None:
         help="Thresholding method (default: %(default)s)",
     )
     _ = group.add_argument(
+        "--spot-threshold",
+        default=0,
+        type=int,
+        help="Manual threshold (overrides spot method) (default: %(default)s)",
+    )
+    _ = group.add_argument(
         "--spot-std",
         default=7,
         type=float,
@@ -145,6 +151,12 @@ def main() -> None:
         default="mean_plus_std_q",
         choices=["mean_plus_std", "mean_plus_std_q", "otsu", "yen", "minimum"],
         help="Thresholding method (default: %(default)s)",
+    )
+    _ = group.add_argument(
+        "--lamina-threshold",
+        default=0,
+        type=int,
+        help="Manual threshold (overrides lamina method) (default: %(default)s)",
     )
     _ = group.add_argument(
         "--lamina-std",
@@ -331,7 +343,10 @@ def main() -> None:
                     args.spot_quantile,
                 )
             spot_fun = threshold_method(
-                args.spot_method, std=spot_std, q=args.spot_quantile
+                args.spot_method,
+                std=spot_std,
+                q=args.spot_quantile,
+                threshold=args.spot_threshold,
             )
             spot_filter_fun = filter_method(args.spot_sigma, args.spot_sigma2)
 
@@ -387,7 +402,10 @@ def main() -> None:
                     args.lamina_quantile,
                 )
             lamina_fun = threshold_method(
-                args.lamina_method, std=lamina_std, q=args.lamina_quantile
+                args.lamina_method,
+                std=lamina_std,
+                q=args.lamina_quantile,
+                threshold=args.lamina_threshold,
             )
             lamina_filter_fun = filter_method(
                 args.lamina_sigma, args.lamina_sigma2
