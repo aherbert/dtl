@@ -105,6 +105,19 @@ containing existing result masks as these YX images will be ignored.
 ./dtl-analysis.py /path/to/image.ics /path/to/images/ /path/to/more/images/ --view
 ```
 
+### Reporting
+
+The results CSV files can be collated and used to generate reports across the analysis.
+This can be done by passing individual CSV files or results directories. Only files
+ending `.spots.csv` or `.summary.csv` are loaded. Reports are printed to the console
+and saved to the specified output directory. Reports can be selected or by default
+all reports are generated. Use the help option (`-h`) to view parameters that change the
+report queries.
+
+```bash
+# Generate reports on the DtL analysis
+./dtl-reports.py /path/to/images/ /path/to/more/images/
+```
 
 ## Development
 
