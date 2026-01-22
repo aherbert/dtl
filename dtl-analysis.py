@@ -132,6 +132,12 @@ def main() -> None:
         choices=[0, 1, 2],
         help="Split using watershed: 1=Distance transform; 2=Image (default: %(default)s)",
     )
+    _ = group.add_argument(
+        "--spot-split-radius",
+        type=int,
+        default=1,
+        help="Radius for local maxima to seed spot split (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("Lamina Threshold Options")
     _ = group.add_argument(
@@ -371,6 +377,7 @@ def main() -> None:
                 fill_holes=args.fill_holes,
                 min_size=args.min_spot_size,
                 split_objects=args.spot_split,
+                split_radius=args.spot_split_radius,
                 global_threshold=args.spot_global,
             )
             imwrite(spots_fn, label1, compression="zlib")

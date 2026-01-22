@@ -125,6 +125,7 @@ def object_threshold(
     fill_holes: int = 0,
     min_size: int = 0,
     split_objects: int = 0,
+    split_radius: int = 1,
     global_threshold: bool = False,
 ) -> npt.NDArray[Any]:
     """Threshold the pixels in each masked object.
@@ -141,6 +142,7 @@ def object_threshold(
         fill_holes: Remove contiguous holes smaller than the specified size.
         min_size: Minimum size of thresholded regions.
         split_objects: Split objects using a watershed based on: 1=EDT; 2=image.
+        split_radius: Radius for local maxima to seed spot split.
         global_threshold: Apply thresholding to all object values together; else each object separately.
 
     Returns:
@@ -161,6 +163,9 @@ def object_threshold(
         h = np.bincount(np.concatenate(data))
         t = fun(h)
         logger.info("Global threshold: %d", t)
+
+    r = 2 * max(split_radius, 1) + 1
+    footprint = np.ones((r, r, r))
 
     for label, _area, bbox in objects:
         # crop for efficiency
@@ -189,7 +194,7 @@ def object_threshold(
                 else crop_i
             )
             coords = peak_local_max(
-                distance, footprint=np.ones((3, 3, 3)), labels=target
+                distance, footprint=footprint, labels=target
             )
             mask = np.zeros(distance.shape, dtype=bool)
             mask[tuple(coords.T)] = True
