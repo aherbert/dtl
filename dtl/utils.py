@@ -15,6 +15,7 @@ import skimage.measure
 import tifffile
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
+from skimage.morphology import ball
 from skimage.segmentation import clear_border, watershed
 from skimage.util import map_array
 
@@ -125,7 +126,7 @@ def object_threshold(
     fill_holes: int = 0,
     min_size: int = 0,
     split_objects: int = 0,
-    split_radius: int = 1,
+    split_radius: int = 2,
     global_threshold: bool = False,
 ) -> npt.NDArray[Any]:
     """Threshold the pixels in each masked object.
@@ -164,8 +165,7 @@ def object_threshold(
         t = fun(h)
         logger.info("Global threshold: %d", t)
 
-    r = 2 * max(split_radius, 1) + 1
-    footprint = np.ones((r, r, r))
+    footprint = ball(max(split_radius, 1))
 
     for label, _area, bbox in objects:
         # crop for efficiency

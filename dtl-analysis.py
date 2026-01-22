@@ -135,7 +135,7 @@ def main() -> None:
     _ = group.add_argument(
         "--spot-split-radius",
         type=int,
-        default=1,
+        default=2,
         help="Radius for local maxima to seed spot split (default: %(default)s)",
     )
 
