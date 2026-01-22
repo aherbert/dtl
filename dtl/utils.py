@@ -97,7 +97,9 @@ def find_objects(
 
 
 def _find_border(
-    label_image: npt.NDArray[Any], labels: list[int]
+    label_image: npt.NDArray[Any],
+    labels: list[int],
+    border_value: int = 1,
 ) -> npt.NDArray[Any]:
     """Find border pixels for all labelled objects."""
     mask = np.zeros(label_image.shape, dtype=bool)
@@ -107,7 +109,10 @@ def _find_border(
         target = label_image == label
         mask = mask | target
         # erosion must not erode the object face at the border
-        eroded = eroded | ndi.binary_erosion(target, strel, border_value=1)
+        # # Make this optional.
+        eroded = eroded | ndi.binary_erosion(
+            target, strel, border_value=border_value
+        )
     border = label_image * mask - label_image * eroded
     return border.astype(label_image.dtype)
 
@@ -367,6 +372,7 @@ def spot_analysis(
     label2: npt.NDArray[Any],
     anisotropy: float = 1.0,
     remove_internal_edge: bool = False,
+    remove_face_border: bool = True,
 ) -> list[tuple[int | float, ...]]:
     """Analyse spots in image 1 within parent objects.
 
@@ -388,7 +394,7 @@ def spot_analysis(
     distance: Distance to nearest neighbour.
 
     Args:
-        label_image: Label iamge.
+        label_image: Label image.
         objects: Objects of interest (computed using find_objects).
         im1: First image.
         label1: First image object labels (spots).
@@ -396,11 +402,15 @@ def spot_analysis(
         label2: Second image object labels (internal objects).
         anisotropy: Anisotropy scaling applied to z dimension.
         remove_internal_edge: Ignore distances to internal objects that touch the parent edge.
+        remove_face_border: Set to True to extend object labels beyond the edge of the image
+        cuboid faces. Set to False to have labels outside the image as zero. All labels
+        touching the edge of the image are border pixels.
 
     Returns:
         analysis results
     """
     results: list[tuple[int | float, ...]] = []
+    border_value = 1 if remove_face_border else 0
     for parent, _, bbox in objects:
         # Simplify the group object by cropping and relabel
         mask = label_image[bbox] == parent
@@ -418,7 +428,9 @@ def spot_analysis(
         data1 = analyse_objects(c_im1, c_label1, objects1, (oz, oy, ox))
         # Borders as KD-tree
         parent_border = _find_border(
-            c_label_, [x + 1 for x in range(len(id_))]
+            c_label_,
+            [x + 1 for x in range(len(id_))],
+            border_value=border_value,
         )
         z, y, x = np.nonzero(parent_border)
         tree1 = scipy.spatial.KDTree(_to_coords(x, y, z, anisotropy))

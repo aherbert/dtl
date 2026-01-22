@@ -198,6 +198,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         help="Include distances to lamina objects that touch the edge; else ignore as edge (default: %(default)s)",
     )
+    _ = group.add_argument(
+        "--face-border",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Include image face voxels as object border; else extend objects beyond the image bounds (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("View Options")
     _ = group.add_argument(
@@ -468,6 +474,7 @@ def main() -> None:
                 label2,
                 anisotropy=args.anisotropy,
                 remove_internal_edge=not args.lamina_edge,
+                remove_face_border=not args.face_border,
             )
 
             formatted = format_spot_results(results, scale=args.scale)
