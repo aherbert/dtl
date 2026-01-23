@@ -127,6 +127,7 @@ def object_threshold(
     min_size: int = 0,
     split_objects: int = 0,
     split_radius: int = 2,
+    split_footprint: str = "ball",
     global_threshold: bool = False,
 ) -> npt.NDArray[Any]:
     """Threshold the pixels in each masked object.
@@ -144,6 +145,7 @@ def object_threshold(
         min_size: Minimum size of thresholded regions.
         split_objects: Split objects using a watershed based on: 1=EDT; 2=image.
         split_radius: Radius for local maxima to seed spot split.
+        split_footprint: Shape for the local maxima footprint (ball; or defaults to cube).
         global_threshold: Apply thresholding to all object values together; else each object separately.
 
     Returns:
@@ -165,7 +167,12 @@ def object_threshold(
         t = fun(h)
         logger.info("Global threshold: %d", t)
 
-    footprint = ball(max(split_radius, 1))
+    r = max(split_radius, 1)
+    footprint = (
+        ball(r)
+        if split_footprint == "ball"
+        else np.ones((2 * r + 1,) * 3, dtype=bool)
+    )
 
     for label, _area, bbox in objects:
         # crop for efficiency

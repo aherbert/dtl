@@ -138,6 +138,12 @@ def main() -> None:
         default=2,
         help="Radius for local maxima to seed spot split (default: %(default)s)",
     )
+    _ = group.add_argument(
+        "--spot-split-footprint",
+        default="ball",
+        choices=["ball", "cube"],
+        help="Footprint shape for local maxima to seed spot split (default: %(default)s)",
+    )
 
     group = parser.add_argument_group("Lamina Threshold Options")
     _ = group.add_argument(
@@ -378,6 +384,7 @@ def main() -> None:
                 min_size=args.min_spot_size,
                 split_objects=args.spot_split,
                 split_radius=args.spot_split_radius,
+                split_footprint=args.spot_split_footprint,
                 global_threshold=args.spot_global,
             )
             imwrite(spots_fn, label1, compression="zlib")
